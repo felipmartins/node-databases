@@ -1,31 +1,41 @@
-const express = require('express');
-const path = require('path');
-const bodyParser = require('body-parser');
-const session = require('express-session');
-const routeHandler = require('./routes');
+const express = require("express");
+const path = require("path");
+const bodyParser = require("body-parser");
+const session = require("express-session");
+const RedisStore = require("connect-redis").default;
+const routeHandler = require("./routes");
+const UserService = require("./services/UserService");
+const BasketService = require("./services/BasketService");
 
 module.exports = (config) => {
+  const redisStore = new RedisStore({
+    client: config.redis.client,
+    prefix: "shopper:",
+  });
   const app = express();
 
   // view engine setup
-  app.set('views', path.join(__dirname, 'views'));
-  app.set('view engine', 'pug');
+  app.set("views", path.join(__dirname, "views"));
+  app.set("view engine", "pug");
 
   app.use(bodyParser.json());
   app.use(bodyParser.urlencoded({ extended: false }));
 
-  app.set('trust proxy', 1); // trust first proxy
-  app.use(session({
-    secret: 'very secret secret to encyrpt session',
-    resave: false,
-    saveUninitialized: false,
-  }));
+  app.set("trust proxy", 1); // trust first proxy
+  app.use(
+    session({
+      store: redisStore,
+      secret: "very secret secret to encyrpt session",
+      resave: false,
+      saveUninitialized: false,
+    })
+  );
 
-  app.use(express.static(path.join(__dirname, '../client')));
-  app.get('/favicon.ico', (req, res) => {
+  app.use(express.static(path.join(__dirname, "../client")));
+  app.get("/favicon.ico", (req, res) => {
     res.status(204);
   });
-  app.get('/robots.txt', (req, res) => {
+  app.get("/robots.txt", (req, res) => {
     res.status(204);
   });
 
@@ -38,11 +48,32 @@ module.exports = (config) => {
     if (!req.session.messages) {
       req.session.messages = [];
     }
+
     res.locals.messages = req.session.messages;
+
+    if (req.session.userId) {
+      try {
+        res.locals.currentUser = await UserService.getOne(req.session.userId);
+        const bastket = new BasketService(
+          config.redis.client,
+          req.session.userId
+        );
+        let basketCount = 0;
+        const basketContent = await bastket.getAll();
+
+        Object.keys(basketContent).forEach((key) => {
+          basketCount += parseInt(basketContent[key], 10);
+        });
+        res.locals.basketCount = basketCount;
+      } catch (error) {
+        return next(error);
+      }
+    }
+
     return next();
   });
 
-  app.use('/', routeHandler(config));
+  app.use("/", routeHandler(config));
 
   // catch 404 and forward to error handler
   app.use((req, res, next) => {
@@ -55,11 +86,11 @@ module.exports = (config) => {
   app.use((err, req, res) => {
     // set locals, only providing error in development
     res.locals.message = err.message;
-    res.locals.error = req.app.get('env') === 'development' ? err : {};
+    res.locals.error = req.app.get("env") === "development" ? err : {};
 
     // render the error page
     res.status(err.status || 500);
-    res.render('error');
+    res.render("error");
   });
 
   return app;
